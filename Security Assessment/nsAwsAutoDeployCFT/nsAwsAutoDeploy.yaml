@@ -32,77 +32,6 @@ Mappings:
     us-west-1:
         "bucket": "netskope-autodeploy-us-west-1"
 Resources:
-#Create S3 Bucket 
-  NetskopeSecurityScanBucket:
-    Type: 'AWS::S3::Bucket'
-#Create Bucket Policy
-  NetskopeSecurityScanBucketPolicy:
-      Type: 'AWS::S3::BucketPolicy'
-      Properties:
-        Bucket:
-          Ref: NetskopeSecurityScanBucket
-        PolicyDocument:
-          Statement:
-            - Sid: AWSCloudTrailAclCheck
-              Action:
-                - 's3:GetBucketAcl'
-              Effect: Allow
-              Resource: !GetAtt NetskopeSecurityScanBucket.Arn
-              Principal:
-                Service: cloudtrail.amazonaws.com
-            - Sid: AWSCloudTrailWrite
-              Action:
-                - 's3:PutObject'
-              Effect: Allow
-              Resource: !Sub 'arn:aws:s3:::${NetskopeSecurityScanBucket}/AWSLogs/${AWS::AccountId}/*'
-              Principal:
-                Service: cloudtrail.amazonaws.com
-              Condition:
-                StringEquals:
-                  's3:x-amz-acl': bucket-owner-full-control
-#Create SNS Topic
-  NetskopeSNSTopic:
-    Type: 'AWS::SNS::Topic'
-
-#Create SNS Policy
-  NetskopeSNSPolicy:
-      Type: 'AWS::SNS::TopicPolicy'
-      Properties:
-        Topics:
-          - Ref: NetskopeSNSTopic
-        PolicyDocument:
-          Statement:
-            - Sid: AWSCloudTrailSNSPolicy
-              Action:
-                - 'sns:Publish'
-              Effect: Allow
-              Principal:
-                Service: cloudtrail.amazonaws.com
-              Resource: !Sub '${NetskopeSNSTopic}'
-
-#Create Netskope CLoudTrail  
-  NetskopeCloudTrail:
-    DependsOn:
-      - NetskopeSecurityScanBucket
-      - NetskopeSecurityScanBucketPolicy
-      - NetskopeSNSTopic
-      - NetskopeSNSPolicy
-    Type: 'AWS::CloudTrail::Trail'
-    Properties:
-      S3BucketName: !Ref NetskopeSecurityScanBucket
-      SnsTopicName: !GetAtt NetskopeSNSTopic.TopicName
-      IsLogging: true
-      EnableLogFileValidation: true
-      IsMultiRegionTrail: true
-      IncludeGlobalServiceEvents: true
-      EventSelectors:
-        - IncludeManagementEvents: true
-          DataResources:
-            - Values:
-              - 'arn:aws:s3:::'
-              Type: 'AWS::S3::Object'
-          ReadWriteType: All
-
   #Create Lambda Role for Custom Resources
   nsLambdaRole:
       Type: AWS::IAM::Role
@@ -128,6 +57,7 @@ Resources:
                     - 'logs:CreateLogStream'
                     - 'logs:PutLogEvents'
                   Resource: "arn:aws:logs:*:*:*"
+  #Create Lambda for Role Prep                
   nsAwsRolePrepInfo:
     Type: 'AWS::Lambda::Function'
     Properties:
@@ -135,12 +65,12 @@ Resources:
       Runtime: python3.7
       Code:
         S3Bucket: !FindInMap [RegionMap, !Ref "AWS::Region", bucket ]
-        S3Key: 'nsAwsRolePrepInfo.zip'
+        S3Key: 'Security_Assessment/nsAwsRolePrepInfo.zip'
       Description: 'Netskope Function to Request Role Prep Info'
       MemorySize: 128
       Timeout: 90
       Role: !GetAtt nsLambdaRole.Arn
-
+  #Create Lambda to Create Instance in Netskope
   nsCreateAwsInstance:
     Type: 'AWS::Lambda::Function'
     Properties:
@@ -148,12 +78,12 @@ Resources:
       Runtime: python3.7
       Code:
         S3Bucket: !FindInMap [RegionMap, !Ref "AWS::Region", bucket ]
-        S3Key: 'nsCreateAwsInstance.zip'
-      Description: 'Netskope Function to Request Role Prep Info'
+        S3Key: 'Security_Assessment/nsCreateAwsInstance.zip'
+      Description: 'Netskope Function to Create AWS Instance in Netskope'
       MemorySize: 128
       Timeout: 90
       Role: !GetAtt nsLambdaRole.Arn
-
+  #Create Lambda to Grant the Instance
   nsGrantInstance:
     Type: 'AWS::Lambda::Function'
     Properties:
@@ -161,8 +91,8 @@ Resources:
       Runtime: python3.7
       Code:
         S3Bucket: !FindInMap [RegionMap, !Ref "AWS::Region", bucket ]
-        S3Key: 'nsGrantInstance.zip'
-      Description: 'Netskope Function to Request Role Prep Info'
+        S3Key: 'Security_Assessment/nsGrantInstance.zip'
+      Description: 'Netskope Function to Grant an AWS Instance in Netskope'
       MemorySize: 128
       Timeout: 90
       Role: !GetAtt nsLambdaRole.Arn
@@ -228,13 +158,9 @@ Resources:
       nsToken: !Ref NSApiToken
       instanceName: !Ref AWSAccount
       roleArn: !GetAtt NetskopeIAMRole.Arn
-      trailName: !Ref NetskopeCloudTrail
-      trailRegion: !Ref AWS::Region
       interval: !Ref ScanInterval
       adminEmail: !Ref AdminEmail
       useFor:
-        - introspection
-        - malware
         - securityscan
 
 #Grant Netskope AWS Instance

@@ -1,0 +1,249 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  AWSAccount:
+    Type: String
+    Description: Enter the name of the AWS Account
+  NSDomain:
+    Type: String
+    Description: Enter the hostname of the Netskope Tenant. (i.e. example.goskope.com) 
+  NSApiToken:
+    Type: String
+    NoEcho: true 
+    Description: Enter the API key from the Netskope Tenant.
+  AdminEmail:
+    Type: String
+    AllowedPattern: '[^\s@]+@[^\s@]+\.[^\s@]+'
+    Description: Enter the email Address to be alerted
+  ScanInterval:
+    Type: String
+    Default: "30"
+    AllowedValues:
+      - "30"
+      - "60"
+      - "120"
+      - "360"
+      - "1440"
+    Description: Number of minutes between
+Mappings:
+  RegionMap: 
+    us-east-1:
+        "bucket": "netskope-autodeploy-us-east-1"
+    us-west-1:
+        "bucket": "netskope-autodeploy-us-west-1"
+Resources:
+#Create S3 Bucket 
+  NetskopeSecurityScanBucket:
+    Type: 'AWS::S3::Bucket'
+#Create Bucket Policy
+  NetskopeSecurityScanBucketPolicy:
+      Type: 'AWS::S3::BucketPolicy'
+      Properties:
+        Bucket:
+          Ref: NetskopeSecurityScanBucket
+        PolicyDocument:
+          Statement:
+            - Sid: AWSCloudTrailAclCheck
+              Action:
+                - 's3:GetBucketAcl'
+              Effect: Allow
+              Resource: !GetAtt NetskopeSecurityScanBucket.Arn
+              Principal:
+                Service: cloudtrail.amazonaws.com
+            - Sid: AWSCloudTrailWrite
+              Action:
+                - 's3:PutObject'
+              Effect: Allow
+              Resource: !Sub 'arn:aws:s3:::${NetskopeSecurityScanBucket}/AWSLogs/${AWS::AccountId}/*'
+              Principal:
+                Service: cloudtrail.amazonaws.com
+              Condition:
+                StringEquals:
+                  's3:x-amz-acl': bucket-owner-full-control
+#Create SNS Topic
+  NetskopeSNSTopic:
+    Type: 'AWS::SNS::Topic'
+
+#Create SNS Policy
+  NetskopeSNSPolicy:
+      Type: 'AWS::SNS::TopicPolicy'
+      Properties:
+        Topics:
+          - Ref: NetskopeSNSTopic
+        PolicyDocument:
+          Statement:
+            - Sid: AWSCloudTrailSNSPolicy
+              Action:
+                - 'sns:Publish'
+              Effect: Allow
+              Principal:
+                Service: cloudtrail.amazonaws.com
+              Resource: !Sub '${NetskopeSNSTopic}'
+
+#Create Netskope CLoudTrail  
+  NetskopeCloudTrail:
+    DependsOn:
+      - NetskopeSecurityScanBucket
+      - NetskopeSecurityScanBucketPolicy
+      - NetskopeSNSTopic
+      - NetskopeSNSPolicy
+    Type: 'AWS::CloudTrail::Trail'
+    Properties:
+      S3BucketName: !Ref NetskopeSecurityScanBucket
+      SnsTopicName: !GetAtt NetskopeSNSTopic.TopicName
+      IsLogging: true
+      EnableLogFileValidation: true
+      IsMultiRegionTrail: true
+      IncludeGlobalServiceEvents: true
+      EventSelectors:
+        - IncludeManagementEvents: true
+          DataResources:
+            - Values:
+              - 'arn:aws:s3:::'
+              Type: 'AWS::S3::Object'
+          ReadWriteType: All
+
+  #Create Lambda Role for Custom Resources
+  nsLambdaRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - "lambda.amazonaws.com"
+              Action:
+                - 'sts:AssumeRole'
+        Path: /
+        Policies:
+          - PolicyName: NetskopeLambdaPolicy
+            PolicyDocument:
+              Version: 2012-10-17
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - 'logs:CreateLogGroup'
+                    - 'logs:CreateLogStream'
+                    - 'logs:PutLogEvents'
+                  Resource: "arn:aws:logs:*:*:*"
+  nsAwsRolePrepInfo:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.7
+      Code:
+        S3Bucket: !FindInMap [RegionMap, !Ref "AWS::Region", bucket ]
+        S3Key: '/All Features/nsAwsRolePrepInfo.zip'
+      Description: 'Netskope Function to Request Role Prep Info'
+      MemorySize: 128
+      Timeout: 90
+      Role: !GetAtt nsLambdaRole.Arn
+
+  nsCreateAwsInstance:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.7
+      Code:
+        S3Bucket: !FindInMap [RegionMap, !Ref "AWS::Region", bucket ]
+        S3Key: '/All Features/nsCreateAwsInstance.zip'
+      Description: 'Netskope Function to Request Role Prep Info'
+      MemorySize: 128
+      Timeout: 90
+      Role: !GetAtt nsLambdaRole.Arn
+
+  nsGrantInstance:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.7
+      Code:
+        S3Bucket: !FindInMap [RegionMap, !Ref "AWS::Region", bucket ]
+        S3Key: '/All Features/nsGrantInstance.zip'
+      Description: 'Netskope Function to Request Role Prep Info'
+      MemorySize: 128
+      Timeout: 90
+      Role: !GetAtt nsLambdaRole.Arn
+
+#Get Netskope Role Prep
+  NetskopeRolePrep:
+    Type: 'Custom::NetskopeRolePrep'
+    Properties:
+      ServiceToken: !GetAtt nsAwsRolePrepInfo.Arn
+      nsDomain: !Ref NSDomain
+      nsToken: !Ref NSApiToken
+
+#Create AWS Role for CSA
+  NetskopeIAMRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !GetAtt NetskopeRolePrep.nsAccountId
+            Action:
+              - 'sts:AssumeRole'
+            Condition:
+              StringEquals: 
+                'sts:ExternalId': !GetAtt NetskopeRolePrep.nsExternalId
+      Path: /
+      Policies:
+        - PolicyName: NetskopeInlinePolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'cloudtrail:DescribeTrails'
+                  - 'cloudtrail:LookupEvents'
+                  - 's3:GetObject'
+                  - 's3:GetObjectAcl'
+                  - 's3:ListBucket'
+                  - 's3:ListAllMyBuckets'
+                  - 's3:GetBucketLocation'
+                  - 'dynamodb:*'
+                  - 'lambda:Get*'
+                  - 'lambda:List'
+                  - 'sns:ConfirmSubscription'
+                  - 'sns:Subscribe'
+                  - 'sns:Unsubscribe'
+                  - 'sqs:GetQueueAttributes'
+                  - 'sqs:GetQueueUrl'
+                  - 'sqs:ListDeadLetterSourceQueues'
+                  - 'sqs:ListQueues'
+                Resource: '*'
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/SecurityAudit"
+
+#Create Netskope AWS Instance
+  NetskopeAwsInstance:
+    Type: 'Custom::NetskopeAwsInstance'
+    Properties:
+      ServiceToken: !GetAtt nsCreateAwsInstance.Arn
+      nsDomain: !Ref NSDomain
+      nsToken: !Ref NSApiToken
+      instanceName: !Ref AWSAccount
+      roleArn: !GetAtt NetskopeIAMRole.Arn
+      trailName: !Ref NetskopeCloudTrail
+      trailRegion: !Ref AWS::Region
+      interval: !Ref ScanInterval
+      adminEmail: !Ref AdminEmail
+      useFor:
+        - introspection
+        - malware
+        - securityscan
+
+#Grant Netskope AWS Instance
+  NetskopeAwsGrant:
+    DependsOn:
+    - NetskopeAwsInstance
+    Type: 'Custom::NetskopeAwsGrantInstance'
+    Properties:
+      ServiceToken: !GetAtt nsGrantInstance.Arn
+      nsDomain: !Ref NSDomain
+      nsToken: !Ref NSApiToken
+      instanceName: !Ref AWSAccount
