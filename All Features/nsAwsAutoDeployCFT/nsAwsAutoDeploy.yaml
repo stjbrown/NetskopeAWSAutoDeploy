@@ -137,7 +137,7 @@ Resources:
       Runtime: python3.7
       Code:
         S3Bucket: !FindInMap [RegionMap, !Ref "AWS::Region", bucket ]
-        S3Key: '/All Features/nsAwsRolePrepInfo.zip'
+        S3Key: 'All_Features/nsAwsRolePrepInfo.zip'
       Description: 'Netskope Function to Request Role Prep Info'
       MemorySize: 128
       Timeout: 90
@@ -150,7 +150,7 @@ Resources:
       Runtime: python3.7
       Code:
         S3Bucket: !FindInMap [RegionMap, !Ref "AWS::Region", bucket ]
-        S3Key: '/All Features/nsCreateAwsInstance.zip'
+        S3Key: 'All_Features/nsCreateAwsInstance.zip'
       Description: 'Netskope Function to Request Role Prep Info'
       MemorySize: 128
       Timeout: 90
@@ -163,7 +163,7 @@ Resources:
       Runtime: python3.7
       Code:
         S3Bucket: !FindInMap [RegionMap, !Ref "AWS::Region", bucket ]
-        S3Key: '/All Features/nsGrantInstance.zip'
+        S3Key: 'All_Features/nsGrantInstance.zip'
       Description: 'Netskope Function to Request Role Prep Info'
       MemorySize: 128
       Timeout: 90
